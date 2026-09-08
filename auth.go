@@ -22,8 +22,17 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		payload, _ := base64.StdEncoding.DecodeString(auth[1])
+		payload, err := base64.StdEncoding.DecodeString(auth[1])
+		if err != nil {
+			http.Error(w, "authorization failed", http.StatusUnauthorized)
+			return
+		}
+
 		pair := strings.SplitN(string(payload), ":", 2)
+		if len(pair) != 2 {
+			http.Error(w, "authorization failed", http.StatusUnauthorized)
+			return
+		}
 
 		if strings.Compare(pair[0], username) != 0 || strings.Compare(pair[1], password) != 0 {
 			http.Error(w, "authorization failed", http.StatusUnauthorized)
