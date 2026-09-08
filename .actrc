@@ -1,0 +1,9 @@
+# Default flags for act (https://github.com/nektos/act).
+#
+# The stock act image has no Go toolchain, so use catthehacker's runner image,
+# which is what most GitHub-hosted-runner workflows expect.
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+
+# On Apple silicon, uncomment this if an action ships amd64-only binaries.
+# Everything in this repository runs natively on arm64, and emulation is slow.
+# --container-architecture linux/amd64

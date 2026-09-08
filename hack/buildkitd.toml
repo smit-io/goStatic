@@ -1,0 +1,10 @@
+# buildkit configuration for the builder created by `make builder`.
+#
+# The registry started by `make registry-up` speaks plain HTTP, which buildkit
+# refuses by default. Local publishing only; CI does not use this file.
+#
+# The builder reaches the registry by container name over a shared docker
+# network: a published port is not visible from inside the buildkit container
+# on Docker Desktop, and "localhost" there means the builder itself.
+[registry."gostatic-registry:5000"]
+  http = true
