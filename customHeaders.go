@@ -66,9 +66,20 @@ func initHeaderConfig(headerConfigPath string) bool {
 			fmt.Println("Cant't read header config file. Error:")
 			fmt.Println(err)
 		} else {
-			byteValue, _ := ioutil.ReadAll(jsonFile)
+			byteValue, readErr := ioutil.ReadAll(jsonFile)
+			if readErr != nil {
+				fmt.Println("Can't read header config file. Error:")
+				fmt.Println(readErr)
+				jsonFile.Close()
+				return false
+			}
 
-			json.Unmarshal(byteValue, &headerConfigs)
+			if parseErr := json.Unmarshal(byteValue, &headerConfigs); parseErr != nil {
+				fmt.Println("Can't parse header config file. Error:")
+				fmt.Println(parseErr)
+				jsonFile.Close()
+				return false
+			}
 
 			if len(headerConfigs.Configs) > 0 {
 				headerConfigValid = true
