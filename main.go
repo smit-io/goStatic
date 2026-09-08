@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -208,8 +209,21 @@ func main() {
 
 	http.Handle(pathPrefix, handler)
 
+	server := &http.Server{
+		Addr: port,
+		// A client that opens a connection and dribbles out its request
+		// forever holds a goroutine hostage, so cap how long the header and
+		// the body may take.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// WriteTimeout is deliberately left unset: it covers the whole
+		// response, and a large file over a slow link would be truncated
+		// mid-transfer.
+	}
+
 	log.Info().Msgf("Listening at http://0.0.0.0%v %v...", port, pathPrefix)
-	if err := http.ListenAndServe(port, nil); err != nil && err != http.ErrServerClosed {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal().Err(err).Msg("Server startup failed")
 	}
 
