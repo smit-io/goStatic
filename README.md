@@ -79,6 +79,20 @@ The fallback option is principally useful for single-page applications (SPAs) wh
 
 The second case is useful if you have multiple SPAs within the one filesystem. e.g., */* and */admin*.
 
+### Compression
+
+Pass `--enable-gzip` to compress responses for clients that send
+`Accept-Encoding: gzip`. Files whose payloads are already compressed (images,
+video, archives, fonts, PDFs) are served uncompressed, since gzipping them
+costs CPU and usually makes the response slightly larger. Responses carry
+`Vary: Accept-Encoding` so shared caches store the two variants separately.
+
+> **Behaviour change:** compression used to be applied only as a side effect of
+> passing `--append-header`, and could not be enabled on its own. It is now
+> controlled solely by `--enable-gzip`. If you relied on `--append-header` to
+> compress responses, add `--enable-gzip`; goStatic logs a warning at startup
+> when `--append-header` is used without it.
+
 
 ## Build
 
