@@ -19,7 +19,10 @@ RUN mkdir ./bin && \
 
     mkdir ./bin/etc && \
     ID=$(shuf -i 100-9999 -n 1) && \
-    upx -9 ./bin/goStatic && \
+
+    # upx refuses to pack Mach-O binaries ("macOS is currently not supported"),
+    # so the darwin targets are left uncompressed rather than failing the build
+    if [ "${GOOS}" != "darwin" ]; then upx -9 ./bin/goStatic; fi && \
     echo $ID && \
     echo "appuser:x:$ID:$ID::/sbin/nologin:/bin/false" > ./bin/etc/passwd && \
     echo "appgroup:x:$ID:appuser" > ./bin/etc/group
