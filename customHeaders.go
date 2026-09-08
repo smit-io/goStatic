@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,7 +66,7 @@ func initHeaderConfig(headerConfigPath string) bool {
 			fmt.Println("Cant't read header config file. Error:")
 			fmt.Println(err)
 		} else {
-			byteValue, readErr := ioutil.ReadAll(jsonFile)
+			byteValue, readErr := io.ReadAll(jsonFile)
 			if readErr != nil {
 				fmt.Println("Can't read header config file. Error:")
 				fmt.Println(readErr)
