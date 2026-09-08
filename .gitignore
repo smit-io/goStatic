@@ -1,3 +1,5 @@
 vendor/
 goStatic*
 .codegraph/
+coverage.out
+coverage.html
