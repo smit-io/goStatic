@@ -12,16 +12,25 @@ type fallback struct {
 	fs          http.FileSystem
 }
 
+// OpenDefault looks for fb.defaultPath in the directory holding requestPath,
+// then in each parent directory, stopping once the root has been checked.
 func OpenDefault(fb fallback, requestPath string) (http.File, error) {
-	requestPath = path.Dir(requestPath)
-	defaultFile := requestPath + "/" + fb.defaultPath;
-	
-	f, err := fb.fs.Open(defaultFile)
-	if os.IsNotExist(err) && requestPath != "" {
-		parentPath, _ := path.Split(requestPath)
-		return OpenDefault(fb, parentPath)
+	dir := path.Dir(requestPath)
+
+	for {
+		f, err := fb.fs.Open(path.Join(dir, fb.defaultPath))
+		if !os.IsNotExist(err) {
+			return f, err
+		}
+
+		// path.Dir is its own fixed point at the root ("/" and "."), so
+		// compare against it rather than looping forever.
+		parent := path.Dir(dir)
+		if parent == dir {
+			return f, err
+		}
+		dir = parent
 	}
-	return f, err
 }
 
 func (fb fallback) Open(requestPath string) (http.File, error) {
