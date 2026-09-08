@@ -181,6 +181,11 @@ func main() {
 			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				log.Debug().Str("URL", r.URL.Path).Str("header", header).Str("headerValue", headerValue).Msg("Extra Headers Handled")
 				w.Header().Set(header, headerValue)
+				// The response body depends on Accept-Encoding, so shared
+				// caches must key on it. Set unconditionally: a cached
+				// uncompressed response must not be replayed to a client
+				// that does accept gzip either.
+				w.Header().Set("Vary", "Accept-Encoding")
 				if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 					fileServer.ServeHTTP(w, r)
 				} else {
