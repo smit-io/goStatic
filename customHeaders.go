@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,7 +32,14 @@ var headerConfigs HeaderConfigArray
 
 func fileExists(filename string) bool {
 	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
+	if err != nil {
+		// Anything other than a missing file (a permission error, a parent
+		// that is not a directory) is worth reporting: the config was asked
+		// for but cannot be read.
+		if !os.IsNotExist(err) {
+			fmt.Println("Can't stat header config file. Error:")
+			fmt.Println(err)
+		}
 		return false
 	}
 	return !info.IsDir()
@@ -59,9 +66,20 @@ func initHeaderConfig(headerConfigPath string) bool {
 			fmt.Println("Cant't read header config file. Error:")
 			fmt.Println(err)
 		} else {
-			byteValue, _ := ioutil.ReadAll(jsonFile)
+			byteValue, readErr := io.ReadAll(jsonFile)
+			if readErr != nil {
+				fmt.Println("Can't read header config file. Error:")
+				fmt.Println(readErr)
+				jsonFile.Close()
+				return false
+			}
 
-			json.Unmarshal(byteValue, &headerConfigs)
+			if parseErr := json.Unmarshal(byteValue, &headerConfigs); parseErr != nil {
+				fmt.Println("Can't parse header config file. Error:")
+				fmt.Println(parseErr)
+				jsonFile.Close()
+				return false
+			}
 
 			if len(headerConfigs.Configs) > 0 {
 				headerConfigValid = true

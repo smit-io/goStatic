@@ -8,12 +8,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -22,10 +23,11 @@ import (
 var (
 	// Def of flags
 	portPtr                  = flag.Int("port", 8043, "The listening port")
-	context                  = flag.String("context", "", "The 'context' path on which files are served, e.g. 'doc' will serve the files at 'http://localhost:<port>/doc/'")
+	contextPath              = flag.String("context", "", "The 'context' path on which files are served, e.g. 'doc' will serve the files at 'http://localhost:<port>/doc/'")
 	basePath                 = flag.String("path", "/srv/http", "The path for the static files")
 	fallbackPath             = flag.String("fallback", "", "Default fallback file. Either absolute for a specific asset (/index.html), or relative to recursively resolve (index.html)")
 	headerFlag               = flag.String("append-header", "", "HTTP response header, specified as `HeaderName:Value` that should be added to all responses.")
+	enableGzip               = flag.Bool("enable-gzip", false, "Compress responses with gzip for clients that accept it. Payloads that are already compressed (images, archives, fonts) are served as-is.")
 	basicAuth                = flag.Bool("enable-basic-auth", false, "Enable basic auth. By default, password are randomly generated. Use --set-basic-auth to set it.")
 	healthCheck              = flag.Bool("enable-health", false, "Enable health check endpoint. You can call /health to get a 200 response. Useful for Kubernetes, OpenFaas, etc.")
 	setBasicAuth             = flag.String("set-basic-auth", "", "Define the basic auth. Form must be user:password")
@@ -68,9 +70,21 @@ func parseHeaderFlag(headerFlag string) (string, string) {
 
 var gzPool = sync.Pool{
 	New: func() interface{} {
-		w := gzip.NewWriter(ioutil.Discard)
+		w := gzip.NewWriter(io.Discard)
 		return w
 	},
+}
+
+// alreadyCompressed holds extensions whose payloads carry their own
+// compression. Running them through gzip costs CPU and typically produces a
+// slightly larger response.
+var alreadyCompressed = map[string]bool{
+	".7z": true, ".br": true, ".bz2": true, ".gz": true, ".rar": true,
+	".xz": true, ".zip": true, ".zst": true,
+	".avif": true, ".gif": true, ".jpeg": true, ".jpg": true,
+	".png": true, ".webp": true,
+	".flac": true, ".mp3": true, ".mp4": true, ".ogg": true, ".webm": true,
+	".pdf": true, ".woff": true, ".woff2": true,
 }
 
 type gzipResponseWriter struct {
@@ -85,6 +99,31 @@ func (w *gzipResponseWriter) WriteHeader(status int) {
 
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
+}
+
+// gzipMiddleware compresses responses for clients that accept gzip, skipping
+// payloads that are already compressed.
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The body depends on Accept-Encoding whether or not this particular
+		// response ends up compressed, so shared caches must always key on it.
+		w.Header().Set("Vary", "Accept-Encoding")
+
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
+			alreadyCompressed[strings.ToLower(path.Ext(r.URL.Path))] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzPool.Get().(*gzip.Writer)
+		defer gzPool.Put(gz)
+
+		gz.Reset(w)
+		defer gz.Close()
+
+		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
+	})
 }
 
 func handleReq(h http.Handler) http.Handler {
@@ -152,8 +191,8 @@ func main() {
 	handler := handleReq(http.FileServer(fileSystem))
 
 	pathPrefix := "/"
-	if len(*context) > 0 {
-		pathPrefix = "/" + *context + "/"
+	if len(*contextPath) > 0 {
+		pathPrefix = "/" + *contextPath + "/"
 		handler = http.StripPrefix(pathPrefix, handler)
 	}
 
@@ -176,27 +215,24 @@ func main() {
 	if len(*headerFlag) > 0 {
 		header, headerValue := parseHeaderFlag(*headerFlag)
 		if len(header) > 0 && len(headerValue) > 0 {
-			fileServer := handler
+			next := handler
 			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				log.Debug().Str("URL", r.URL.Path).Str("header", header).Str("headerValue", headerValue).Msg("Extra Headers Handled")
 				w.Header().Set(header, headerValue)
-				if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-					fileServer.ServeHTTP(w, r)
-				} else {
-					w.Header().Set("Content-Encoding", "gzip")
-					gz := gzPool.Get().(*gzip.Writer)
-					defer gzPool.Put(gz)
-
-					gz.Reset(w)
-					defer gz.Close()
-					fileServer.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
-
-				}
-
+				next.ServeHTTP(w, r)
 			})
+
+			if !*enableGzip {
+				log.Warn().Msg("gzip is no longer implied by append-header; pass --enable-gzip to compress responses")
+			}
 		} else {
 			log.Warn().Msg("appendHeader misconfigured; ignoring.")
 		}
+	}
+
+	if *enableGzip {
+		log.Debug().Msg("Enabling gzip compression")
+		handler = gzipMiddleware(handler)
 	}
 
 	if *healthCheck {
@@ -208,8 +244,21 @@ func main() {
 
 	http.Handle(pathPrefix, handler)
 
+	server := &http.Server{
+		Addr: port,
+		// A client that opens a connection and dribbles out its request
+		// forever holds a goroutine hostage, so cap how long the header and
+		// the body may take.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// WriteTimeout is deliberately left unset: it covers the whole
+		// response, and a large file over a slow link would be truncated
+		// mid-transfer.
+	}
+
 	log.Info().Msgf("Listening at http://0.0.0.0%v %v...", port, pathPrefix)
-	if err := http.ListenAndServe(port, nil); err != nil && err != http.ErrServerClosed {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal().Err(err).Msg("Server startup failed")
 	}
 
