@@ -5,9 +5,10 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // authMiddleware checks basic auth
@@ -50,9 +51,9 @@ func authMiddleware(next http.Handler) http.Handler {
 }
 
 func parseAuth(auth string) {
-	identity := strings.Split(*setBasicAuth, ":")
+	identity := strings.Split(auth, ":")
 	if len(identity) != 2 {
-		log.Fatalln("basic auth must be like this: user:password")
+		log.Fatal().Msg("basic auth must be like this: user:password")
 	}
 
 	username = identity[0]
@@ -62,7 +63,7 @@ func parseAuth(auth string) {
 func generateRandomAuth() {
 	username = *defaultUsernameBasicAuth
 	password = generateRandomString()
-	log.Printf("User generated for basic auth. User:'%v', password:'%v'\n", username, password)
+	log.Info().Str("user", username).Str("password", password).Msg("User generated for basic auth")
 }
 
 func generateRandomString() string {
