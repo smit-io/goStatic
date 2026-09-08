@@ -101,6 +101,58 @@ costs CPU and usually makes the response slightly larger. Responses carry
 > when `--append-header` is used without it.
 
 
+## Development
+
+`make help` lists every target. The Go targets need only a Go toolchain; the
+rest need a running Docker daemon.
+
+```bash
+make check           # gofmt, go vet and the tests under -race — what CI checks
+make run             # build and serve testdata/www on http://localhost:8043
+make cover           # write coverage.html
+make docker-build    # single-arch image for this machine, tagged gostatic:dev
+make docker-build-all # all eight release platforms, exactly as CI builds them
+```
+
+Override any variable on the command line, e.g. `make run PORT=9000
+WWW=/path/to/site` or `make docker-build TAG=v1`.
+
+### Publishing images locally
+
+`make publish-local` starts a throwaway registry, builds a multi-arch image and
+pushes it there, without involving GHCR:
+
+```bash
+make publish-local              # push 127.0.0.1:5001/gostatic:dev
+make publish-local-check        # show the resulting manifest list
+docker pull 127.0.0.1:5001/gostatic:dev
+make registry-down builder-down # tear it all down
+```
+
+The registry is published on port 5001 because AirPlay Receiver occupies 5000
+on macOS. The buildx builder reaches it by container name over a shared docker
+network, since a published port is not visible from inside the builder on
+Docker Desktop; `hack/buildkitd.toml` allows plain HTTP for that hostname.
+
+### Running the workflows locally
+
+[act](https://github.com/nektos/act) runs the GitHub Actions workflows on your
+own machine:
+
+```bash
+make ci-list   # list the jobs act would run
+make ci-dry    # walk the build workflow without executing any step
+make ci        # actually run the build workflow
+```
+
+Both targets are scoped to `build.yml` deliberately: `docker-push.yml` publishes
+to GHCR, which a local run has no business attempting. Use `make publish-local`
+instead when you want an image out of a local build.
+
+`make ci` runs the whole build job, image build included, against your local
+Docker daemon, so it reuses your build cache — roughly a minute warm, longer on
+a cold cache.
+
 ## Build
 
 ### Docker images
