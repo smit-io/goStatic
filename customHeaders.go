@@ -32,7 +32,14 @@ var headerConfigs HeaderConfigArray
 
 func fileExists(filename string) bool {
 	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
+	if err != nil {
+		// Anything other than a missing file (a permission error, a parent
+		// that is not a directory) is worth reporting: the config was asked
+		// for but cannot be read.
+		if !os.IsNotExist(err) {
+			fmt.Println("Can't stat header config file. Error:")
+			fmt.Println(err)
+		}
 		return false
 	}
 	return !info.IsDir()
