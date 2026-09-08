@@ -48,6 +48,8 @@ Usage of ./goStatic:
         Define the user (default "gopher")
   -enable-basic-auth
         Enable basic auth. By default, password are randomly generated. Use --set-basic-auth to set it.
+  -enable-gzip
+        Compress responses with gzip for clients that accept it. Payloads that are already compressed (images, archives, fonts) are served as-is.
   -enable-health
         Enable health check endpoint. You can call /health to get a 200 response. Useful for Kubernetes, OpenFaas, etc.
   -enable-logging

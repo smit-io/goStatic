@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ var (
 	basePath                 = flag.String("path", "/srv/http", "The path for the static files")
 	fallbackPath             = flag.String("fallback", "", "Default fallback file. Either absolute for a specific asset (/index.html), or relative to recursively resolve (index.html)")
 	headerFlag               = flag.String("append-header", "", "HTTP response header, specified as `HeaderName:Value` that should be added to all responses.")
+	enableGzip               = flag.Bool("enable-gzip", false, "Compress responses with gzip for clients that accept it. Payloads that are already compressed (images, archives, fonts) are served as-is.")
 	basicAuth                = flag.Bool("enable-basic-auth", false, "Enable basic auth. By default, password are randomly generated. Use --set-basic-auth to set it.")
 	healthCheck              = flag.Bool("enable-health", false, "Enable health check endpoint. You can call /health to get a 200 response. Useful for Kubernetes, OpenFaas, etc.")
 	setBasicAuth             = flag.String("set-basic-auth", "", "Define the basic auth. Form must be user:password")
@@ -74,6 +76,18 @@ var gzPool = sync.Pool{
 	},
 }
 
+// alreadyCompressed holds extensions whose payloads carry their own
+// compression. Running them through gzip costs CPU and typically produces a
+// slightly larger response.
+var alreadyCompressed = map[string]bool{
+	".7z": true, ".br": true, ".bz2": true, ".gz": true, ".rar": true,
+	".xz": true, ".zip": true, ".zst": true,
+	".avif": true, ".gif": true, ".jpeg": true, ".jpg": true,
+	".png": true, ".webp": true,
+	".flac": true, ".mp3": true, ".mp4": true, ".ogg": true, ".webm": true,
+	".pdf": true, ".woff": true, ".woff2": true,
+}
+
 type gzipResponseWriter struct {
 	io.Writer
 	http.ResponseWriter
@@ -86,6 +100,31 @@ func (w *gzipResponseWriter) WriteHeader(status int) {
 
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
+}
+
+// gzipMiddleware compresses responses for clients that accept gzip, skipping
+// payloads that are already compressed.
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The body depends on Accept-Encoding whether or not this particular
+		// response ends up compressed, so shared caches must always key on it.
+		w.Header().Set("Vary", "Accept-Encoding")
+
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
+			alreadyCompressed[strings.ToLower(path.Ext(r.URL.Path))] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzPool.Get().(*gzip.Writer)
+		defer gzPool.Put(gz)
+
+		gz.Reset(w)
+		defer gz.Close()
+
+		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
+	})
 }
 
 func handleReq(h http.Handler) http.Handler {
@@ -177,32 +216,24 @@ func main() {
 	if len(*headerFlag) > 0 {
 		header, headerValue := parseHeaderFlag(*headerFlag)
 		if len(header) > 0 && len(headerValue) > 0 {
-			fileServer := handler
+			next := handler
 			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				log.Debug().Str("URL", r.URL.Path).Str("header", header).Str("headerValue", headerValue).Msg("Extra Headers Handled")
 				w.Header().Set(header, headerValue)
-				// The response body depends on Accept-Encoding, so shared
-				// caches must key on it. Set unconditionally: a cached
-				// uncompressed response must not be replayed to a client
-				// that does accept gzip either.
-				w.Header().Set("Vary", "Accept-Encoding")
-				if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-					fileServer.ServeHTTP(w, r)
-				} else {
-					w.Header().Set("Content-Encoding", "gzip")
-					gz := gzPool.Get().(*gzip.Writer)
-					defer gzPool.Put(gz)
-
-					gz.Reset(w)
-					defer gz.Close()
-					fileServer.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
-
-				}
-
+				next.ServeHTTP(w, r)
 			})
+
+			if !*enableGzip {
+				log.Warn().Msg("gzip is no longer implied by append-header; pass --enable-gzip to compress responses")
+			}
 		} else {
 			log.Warn().Msg("appendHeader misconfigured; ignoring.")
 		}
+	}
+
+	if *enableGzip {
+		log.Debug().Msg("Enabling gzip compression")
+		handler = gzipMiddleware(handler)
 	}
 
 	if *healthCheck {
