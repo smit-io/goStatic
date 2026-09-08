@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -34,7 +35,12 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if strings.Compare(pair[0], username) != 0 || strings.Compare(pair[1], password) != 0 {
+		// Both comparisons always run, and each is constant time, so neither
+		// the username nor the password leaks through response timing.
+		userMatch := subtle.ConstantTimeCompare([]byte(pair[0]), []byte(username))
+		passMatch := subtle.ConstantTimeCompare([]byte(pair[1]), []byte(password))
+
+		if userMatch&passMatch != 1 {
 			http.Error(w, "authorization failed", http.StatusUnauthorized)
 			return
 		}
